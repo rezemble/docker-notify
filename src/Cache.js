@@ -1,50 +1,46 @@
-const fs = require('fs');
+const fs      = require('fs');
+const fsp     = fs.promises;
+const path    = require('path');
+const process = require('process');
 
-let cachePath = "./cache/cache.json";
+let cachePath = path.join(process.cwd(), ..."/cache/cache.json".split('/'));
 
-class Cache {
+const Cache = (function(){
+    let DATA = {};
 
-    static getCache() {
-        return new Promise((resolve, reject) => {
-            fs.readFile(cachePath, 'utf8', (err, data) => {
-                if(err) {
-                    if(err.code == 'ENOENT') {
-                        //cache does not exist, create it
-                        fs.writeFile(cachePath, "{}", 'utf8', (err) => {
-                            if(err) {
-                                reject(err);
-                            } else {
-                                resolve({});
-                            }
-                        });
-                    } else {
-                        reject(err);
-                    }
-                } else {
-                    try{
-                        let cache = JSON.parse(data);
-                        resolve(cache);
-                    } catch(e) {
-                        console.log("Cache is corrupted, recreate it");
-                        resolve({});
-                    }                
-                }
-            });
-        });
+    // scoped function to flush cache to disk
+    const dump = ()=>{
+        console.log('[CACHE] dumping data...');
+        fs.writeFileSync(cachePath, JSON.stringify(DATA));
+    };
+
+    // pseudo class for scope clearance
+    class Cache {
+        setCache( data ) { // set entire cache
+            return DATA = data;
+        }
+        getCache() { // get cache
+            return DATA;
+        }
+        flush() { // manually flush as promise
+            return fsp.writeFile(cachePath, JSON.stringify(DATA));
+        }
     }
 
-    static writeCache(cache) {
-        return new Promise((resolve, reject) => {
-            fs.writeFile(cachePath, cache, 'utf8', (err) => {
-                if(err) {
-                    reject(err);
-                } else {
-                    resolve();
-                }
-            });
-        });
-    }
+    // check if file exists
+    fsp.access(cachePath, fs.constants.R_OK | fs.constants.W_OK)
+        .then(d=>fsp.readFile(cachePath, 'utf8')) // if so, read
+        .then(d=>JSON.parse(d)) // and parse from JSON
+        .then(d=>DATA=d) // and set current cache
+        .catch(e=>console.info('no cache file or cache file corrupt...', e));
 
-}
+    // dump data when process terminates
+    process.on('exit', dump);
+
+    // automatically dump every 60 seconds
+    setInterval(dump, 60 * 1000);
+
+    return new Cache();
+})();
 
 module.exports = Cache;

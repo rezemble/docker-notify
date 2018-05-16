@@ -1,6 +1,6 @@
-const dockerAPI = require('docker-hub-api');
+const dockerAPI   = require('docker-hub-api');
 const mailService = require('./mailService');
-const Cache = require('./Cache');
+const Cache       = require('./Cache');
 
 //parse repositories from env
 let repositories = process.env.repositories.split(',').map((elem) => {
@@ -16,28 +16,34 @@ let repositories = process.env.repositories.split(',').map((elem) => {
     return res;
 });
 
-//get variables from env
-let smtpHost = process.env.smtpHost;
-let smtpPort = Number(process.env.smtpPort);
-let smtpSecure = process.env.smtpSecure == "true";
-let smtpSenderName = process.env.smtpSenderName;
-let smtpSenderAddress = process.env.smtpSenderAddress;
-let smtpUsername = process.env.smtpUsername;
-let smtpPassword = process.env.smtpPassword;
+// get variables from env
+let {
+  smtpHost,
+  smtpPort,
+  smtpSecure,
+  smtpSenderName,
+  smtpSenderAddress,
+  smtpUsername,
+  smtpPassword,
+  mailReceiver,
+  checkInterval
+} = process.env;
 
-let mailReceiver = process.env.mailReceiver;
+smtpPort = parseInt(smtpPort);
+checkInterval = parseInt(checkInterval);
+smtpSecure = smtpSecure == 'true';
 
-//initialize mail transporter
+// initialize mail transporter
 let mailTransporter = mailService(smtpHost, smtpPort, smtpSecure, smtpUsername, smtpPassword);
 
-//sends an email with a given message to the receiver which is defined in the env
-let sendMail = function(msg) {
+// sends an email with a given message to the receiver which is defined in the env
+let sendMail = (text) => {
     mailTransporter.verify().then(() => {
         let mailOptions = {
-            from: '"' + smtpSenderName + '" <' + smtpSenderAddress + '>',
+            from: `"${smtpSenderName}" <${smtpSenderAddress}>`,
             to: mailReceiver,
             subject: "Docker image updated",
-            text: msg
+            text
         };
         mailTransporter.sendMail(mailOptions).then((info) => {
             console.log("Notification mail sent: ", info);
@@ -49,53 +55,46 @@ let sendMail = function(msg) {
     });
 };
 
-let getRepositoryInfo = function(user, name) {
-    return dockerAPI.repository(user, name);
-};
+let getRepositoryInfo = (user, name) => dockerAPI.repository(user, name);
 
-let getTagInfo = function(user, name) {
-    return dockerAPI.tags(user, name);
-}
+let getTagInfo = (user, name) => dockerAPI.tags(user, name);
 
-let checkRepository = function(repository, repoCache) {
-    return new Promise((resolve, reject) => {
-        
-        let checkUpdateDates = function(repoInfo) {
-            let updated;
-            if(repoCache) {
-                let cachedDate = Date.parse(repoCache.lastUpdated);
-                let currentDate = Date.parse(repoInfo.last_updated);
-                updated = cachedDate < currentDate;
-            } else {
-                updated = false; 
-            }
-            resolve({
-                lastUpdated: repoInfo.last_updated,
-                name: repoInfo.name,
-                user: repoInfo.user,
-                updated: updated
-            });
-        }
-
-        if(repository.tag) {
-            getTagInfo(repository.user, repository.name).then((tags) => {
-                let tagInfo = tags.filter((elem) => {
-                    return elem.name == repository.tag;
-                })[0];
-                tagInfo.user = repository.user;
-                tagInfo.name = repository.name;
-                checkUpdateDates(tagInfo);
-            });
+let checkRepository = (repository, repoCache) => new Promise((resolve, reject) => {
+    let checkUpdateDates = (repoInfo) => {
+        let updated;
+        if(repoCache) {
+            let cachedDate = Date.parse(repoCache.lastUpdated);
+            let currentDate = Date.parse(repoInfo.last_updated);
+            updated = cachedDate < currentDate;
         } else {
-            getRepositoryInfo(repository.user, repository.name).then(checkUpdateDates).catch((err) => {
-                console.error("Error while fetching repo info: ", err);
-                reject();
-            });
+            updated = false;
         }
-    });
-};
+        resolve({
+            lastUpdated: repoInfo.last_updated,
+            name: repoInfo.name,
+            user: repoInfo.user,
+            updated: updated
+        });
+    }
 
-let checkForUpdates = function() {
+    if(repository.tag) {
+        getTagInfo(repository.user, repository.name).then((tags) => {
+            let tagInfo = tags.filter((elem) => {
+                return elem.name == repository.tag;
+            })[0];
+            tagInfo.user = repository.user;
+            tagInfo.name = repository.name;
+            checkUpdateDates(tagInfo);
+        });
+    } else {
+        getRepositoryInfo(repository.user, repository.name).then(checkUpdateDates).catch((err) => {
+            console.error("Error while fetching repo info: ", err);
+            reject();
+        });
+    }
+});
+
+let checkForUpdates = () => {
     console.log("Checking for updated repositories");
     Cache.getCache().then((cache) => {
         let repoChecks = [];
@@ -138,7 +137,6 @@ let checkForUpdates = function() {
     });
 };
 
-let checkInterval = Number(process.env.checkInterval);
 
 checkForUpdates();
 
